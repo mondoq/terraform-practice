@@ -4,7 +4,11 @@
 [![Portfolio](https://github.com/mondoq/terraform-practice/actions/workflows/portfolio.yml/badge.svg)](https://mondoq.github.io/terraform-practice/)
 
 📊 **ポートフォリオ（自動採点の結果）: https://mondoq.github.io/terraform-practice/**
-VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が演習を採点 → GitHub Pages を更新
+VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が演習を採点 → GitHub Pages に記事として公開
+
+- 演習は、`.tf` を書き始めると記事になる（課題・コード・採点結果・変更履歴は自動）
+- 各フォルダの `NOTE.md` に書いた内容は、記事の「学んだこと」に載る
+- プロフィールは `PROFILE.md`
 
 | # | ディレクトリ | 必要なもの | 料金 |
 |---|---|---|---|

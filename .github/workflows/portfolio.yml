@@ -1,6 +1,6 @@
 # Portfolio: main に push されるたびに演習を採点し、結果を GitHub Pages に公開する。
 #   1. scripts/grade.sh         … 演習を apply → check.sh で採点 → destroy（Docker はランナーに標準で入っている）
-#   2. scripts/build_portfolio.py … 採点結果・コード・コミット履歴から _site/index.html を生成
+#   2. scripts/build_portfolio.py … 採点結果・コード・NOTE.md・コミット履歴から記事ページを生成
 #   3. GitHub Pages にデプロイ
 name: Portfolio
 
@@ -33,7 +33,9 @@ jobs:
       - name: 演習を採点
         run: scripts/grade.sh
       - name: ページを生成
-        run: python3 scripts/build_portfolio.py
+        run: |
+          pip install markdown==3.10.3
+          python3 scripts/build_portfolio.py
 
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

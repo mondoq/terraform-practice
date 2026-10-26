@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""ポートフォリオページ _site/index.html を生成する。
+"""ポートフォリオ（記事形式）を _site/ に生成する。
 
-入力: build/results/（scripts/grade.sh の採点結果）、各ディレクトリの .tf、git の履歴
+  _site/index.html        … 記事一覧
+  _site/posts/<名前>.html  … 演習・プロジェクトごとの記事
+
+記事の材料:
+  TASK.md   … 課題（「手順」の節は手元の作業メモなので除く）
+  *.tf      … 書いたコード
+  NOTE.md   … 自分の一言（任意。空なら節ごと出さない）
+  build/results/ … scripts/grade.sh の採点結果
+  git log   … 公開日・更新日・変更履歴
+プロフィールはリポジトリ直下の PROFILE.md（1行目の見出しが名前、残りが自己紹介）。
 """
-import collections
 import datetime
 import html
 import os
 import pathlib
 import re
+import shutil
 import subprocess
+import zlib
+
+import markdown
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "build" / "results"
@@ -17,13 +29,6 @@ OUT = ROOT / "_site"
 REPO = os.environ.get("GITHUB_REPOSITORY", "mondoq/terraform-practice")
 REPO_URL = f"https://github.com/{REPO}"
 JST = datetime.timezone(datetime.timedelta(hours=9))
-
-STATUS_LABEL = {
-    "pass": ("クリア", "pass"),
-    "fail": ("挑戦中", "fail"),
-    "todo": ("未着手", "todo"),
-}
-PROJECT_LABEL = {"pass": ("validate OK", "pass"), "fail": ("validate NG", "fail")}
 
 e = html.escape
 
@@ -36,28 +41,53 @@ def read(path):
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def status_of(name):
-    return read(RESULTS / f"{name}.status").strip() or "todo"
+def md(text, demote=0):
+    """demote: 記事の節（h2）の下に入れるため、見出しを何段下げるか"""
+    if demote:
+        text = re.sub(r"^(#{1,5}) ", lambda m: "#" * (len(m[1]) + demote) + " ", text, flags=re.M)
+    return markdown.markdown(text, extensions=["tables", "fenced_code"])
 
 
-def last_updated(path):
-    ts = git("log", "-1", "--format=%cI", "--", str(path.relative_to(ROOT)))
-    return ts[:10] if ts else "-"
+def jp_date(iso):
+    return f"{int(iso[:4])}年{int(iso[5:7])}月{int(iso[8:10])}日" if iso else ""
 
 
-def score(log):
-    m = re.search(r"結果: (\d+) 合格 / (\d+) 不合格", log)
-    return (int(m[1]), int(m[2])) if m else None
+def dir_dates(d):
+    """(公開日, 更新日) = そのディレクトリの最初と最後のコミット日"""
+    log = git("log", "--format=%cI", "--", str(d.relative_to(ROOT))).splitlines()
+    return (log[-1][:10], log[0][:10]) if log else ("", "")
 
 
-def code_blocks(dir_):
-    parts = []
-    for tf in sorted(dir_.glob("*.tf")):
-        parts.append(
-            f'<div class="file"><div class="fname">{e(tf.name)}</div>'
-            f"<pre><code>{e(read(tf))}</code></pre></div>"
+def history(d):
+    raw = git("log", "--format=%H%x09%cI%x09%s", "--", str(d.relative_to(ROOT)))
+    items = []
+    for line in raw.splitlines()[:20]:
+        sha, ts, subject = line.split("\t", 2)
+        items.append(
+            f'<li><time>{ts[:16].replace("T", " ")}</time>'
+            f'<a href="{REPO_URL}/commit/{sha}">{e(subject)}</a></li>'
         )
-    return "".join(parts)
+    return f'<ul class="history">{"".join(items)}</ul>' if items else ""
+
+
+def note_html(d):
+    text = re.sub(r"<!--.*?-->", "", read(d / "NOTE.md"), flags=re.S).strip()
+    return md(text, demote=1) if text else ""
+
+
+def task_html(d):
+    text = read(d / "TASK.md")
+    text = re.sub(r"\A# .*\n", "", text)  # タイトルは記事見出しに使う
+    text = re.sub(r"^## 手順\n.*?(?=^## |\Z)", "", text, flags=re.S | re.M)
+    return md(text, demote=1)
+
+
+def code_html(d):
+    return "".join(
+        f'<figure class="code"><figcaption>{e(tf.name)}</figcaption>'
+        f"<pre><code>{e(read(tf))}</code></pre></figure>"
+        for tf in sorted(d.glob("*.tf"))
+    )
 
 
 def leading_comment(tf):
@@ -69,182 +99,231 @@ def leading_comment(tf):
     return lines
 
 
-def exercise_cards():
-    cards, cleared = [], 0
-    dirs = sorted(p for p in (ROOT / "exercises").glob("ex*") if p.is_dir())
-    for d in dirs:
-        st = status_of(d.name)
-        cleared += st == "pass"
-        label, cls = STATUS_LABEL.get(st, STATUS_LABEL["todo"])
-        title = read(d / "TASK.md").splitlines()[0].lstrip("# ") if (d / "TASK.md").exists() else d.name
+def section(title, body):
+    return f"<h2>{title}</h2>{body}" if body else ""
+
+
+def exercise_articles():
+    for d in sorted(p for p in (ROOT / "exercises").glob("ex*") if p.is_dir()):
+        status = read(RESULTS / f"{d.name}.status").strip()
+        if status not in ("pass", "fail"):
+            continue  # 未着手は記事にしない
         log = read(RESULTS / f"{d.name}.log")
-        sc = score(log)
-        meta = f"{sc[0]} / {sc[0] + sc[1]} チェック合格" if sc else ""
-        body = ""
-        if st != "todo":
-            body = (
-                f"<details><summary>コード</summary>{code_blocks(d)}</details>"
-                f"<details><summary>採点結果</summary><pre class=\"log\">{e(log)}</pre></details>"
-            )
-        cards.append(
-            f'<article class="card"><div class="row"><h3>{e(title)}</h3>'
-            f'<span class="badge {cls}">{label}</span></div>'
-            f'<p class="meta">{e(meta)}{" · " if meta else ""}最終更新 {last_updated(d)}</p>{body}</article>'
-        )
-    return "".join(cards), cleared, len(dirs)
+        m = re.search(r"結果: (\d+) 合格 / (\d+) 不合格", log)
+        score = f" {m[1]}/{int(m[1]) + int(m[2])}" if m else ""
+        title = read(d / "TASK.md").splitlines()[0].lstrip("# ") if (d / "TASK.md").exists() else d.name
+        published, updated = dir_dates(d)
+        yield {
+            "slug": d.name,
+            "kind": "演習",
+            "title": title,
+            "chip": ("クリア" if status == "pass" else "挑戦中") + score,
+            "chip_cls": status,
+            "published": published,
+            "updated": updated,
+            "body": "".join([
+                section("課題", task_html(d)),
+                section("書いたコード", code_html(d)),
+                section("学んだこと", note_html(d)),
+                section("自動採点の結果", f'<pre class="log">{e(log)}</pre>'),
+                section("変更履歴", history(d)),
+            ]),
+        }
 
 
-def project_cards():
-    cards = []
+def project_articles():
     for d in sorted(p for p in ROOT.glob("[0-9][0-9]-*") if p.is_dir()):
-        label, cls = PROJECT_LABEL.get(status_of(d.name), PROJECT_LABEL["fail"])
+        status = read(RESULTS / f"{d.name}.status").strip()
         desc = leading_comment(d / "main.tf")
-        headline = desc[0] if desc else d.name
-        rest = "\n".join(desc[1:]).strip("\n")
-        cards.append(
-            f'<article class="card"><div class="row"><h3>{e(headline)}</h3>'
-            f'<span class="badge {cls}">{label}</span></div>'
-            f'<p class="meta"><code>{e(d.name)}/</code> · 最終更新 {last_updated(d)}</p>'
-            f'{f"<pre class=desc>{e(rest)}</pre>" if rest else ""}'
-            f"<details><summary>コード</summary>{code_blocks(d)}</details></article>"
-        )
-    return "".join(cards)
+        overview = "\n".join(desc[1:]).strip("\n")
+        published, updated = dir_dates(d)
+        yield {
+            "slug": d.name,
+            "kind": "構築",
+            "title": re.sub(r"^演習\d+:\s*", "", desc[0]) if desc else d.name,
+            "chip": "validate OK" if status == "pass" else "validate NG",
+            "chip_cls": "pass" if status == "pass" else "fail",
+            "published": published,
+            "updated": updated,
+            "body": "".join([
+                section("構成", f'<pre class="plain">{e(overview)}</pre>' if overview else ""),
+                section("学んだこと", note_html(d)),
+                section("コード", code_html(d)),
+                section("変更履歴", history(d)),
+            ]),
+        }
 
 
-def activity():
-    raw = git("log", "--format=%H%x09%cI%x09%s", "-n", "500")
-    commits = [line.split("\t", 2) for line in raw.splitlines() if line]
-
-    per_day = collections.Counter(c[1][:10] for c in commits)
-    today = datetime.datetime.now(JST).date()
-    start = today - datetime.timedelta(days=7 * 16 - 1 + (today.weekday() + 1) % 7)
-    cells = []
-    d = start
-    while d <= today:
-        n = per_day.get(d.isoformat(), 0)
-        lv = 0 if n == 0 else 1 if n < 3 else 2 if n < 8 else 3
-        cells.append(f'<i class="l{lv}" title="{d.isoformat()}: {n} commits"></i>')
-        d += datetime.timedelta(days=1)
-
-    rows = "".join(
-        f'<li><time>{c[1][:16].replace("T", " ")}</time>'
-        f'<a href="{REPO_URL}/commit/{c[0]}">{e(c[2].splitlines()[0])}</a></li>'
-        for c in commits[:30]
+def eyecatch(a, cls="eyecatch"):
+    hue = zlib.crc32(a["slug"].encode()) % 360
+    return (
+        f'<div class="{cls}" style="--h:{hue}" aria-hidden="true">'
+        f'<span class="eye-kind">{a["kind"]} · Terraform</span>'
+        f'<span class="eye-title">{e(a["title"])}</span></div>'
     )
-    return "".join(cells), rows, len(commits), len(per_day)
+
+
+def profile():
+    text = read(ROOT / "PROFILE.md")
+    m = re.match(r"# (.+)\n", text)
+    name = m[1].strip() if m else REPO.split("/")[0]
+    bio = md(text[m.end():].strip()) if m else ""
+    return name, bio
+
+
+def page(title, body, depth=0):
+    base = "../" * depth
+    return PAGE.format(title=e(title), body=body, base=base)
 
 
 def main():
-    ex_html, cleared, total = exercise_cards()
-    heat, rows, n_commits, n_days = activity()
-    now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
-
-    page = TEMPLATE.format(
-        repo=e(REPO),
-        repo_url=REPO_URL,
-        now=now,
-        cleared=cleared,
-        total=total,
-        n_commits=n_commits,
-        n_days=n_days,
-        exercises=ex_html,
-        projects=project_cards(),
-        heat=heat,
-        commits=rows,
+    articles = sorted(
+        [*exercise_articles(), *project_articles()],
+        key=lambda a: (a["updated"], a["slug"]),
+        reverse=True,
     )
-    OUT.mkdir(exist_ok=True)
-    (OUT / "index.html").write_text(page, encoding="utf-8")
-    print(f"wrote {OUT / 'index.html'}")
+    name, bio = profile()
+    avatar = e(name[:1].upper())
+    now = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M")
+
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    (OUT / "posts").mkdir(parents=True)
+    (OUT / "style.css").write_text(CSS, encoding="utf-8")
+
+    for a in articles:
+        updated = (
+            f" · {jp_date(a['updated'])} 更新" if a["updated"] and a["updated"] != a["published"] else ""
+        )
+        body = f"""
+<nav class="top"><a href="../index.html">← {e(name)} の記事一覧</a></nav>
+<article class="post">
+  {eyecatch(a)}
+  <h1>{e(a["title"])}</h1>
+  <div class="byline">
+    <span class="avatar">{avatar}</span>
+    <div><b>{e(name)}</b><br><span class="muted">{jp_date(a["published"])}{updated}</span></div>
+    <span class="chip {a["chip_cls"]}">{e(a["chip"])}</span>
+  </div>
+  <div class="content">{a["body"]}</div>
+</article>
+<footer>このページは push のたびに GitHub Actions が自動採点・生成しています（{now} JST）· <a href="{REPO_URL}">ソース</a></footer>
+"""
+        (OUT / "posts" / f"{a['slug']}.html").write_text(page(a["title"], body, depth=1), encoding="utf-8")
+
+    cards = "".join(
+        f"""<a class="card" href="posts/{a["slug"]}.html">
+  {eyecatch(a, "thumb")}
+  <div class="card-body">
+    <h2>{e(a["title"])}</h2>
+    <div class="card-meta"><span class="muted">{jp_date(a["updated"] or a["published"])}</span>
+    <span class="chip {a["chip_cls"]}">{e(a["chip"])}</span></div>
+  </div>
+</a>"""
+        for a in articles
+    ) or '<p class="muted">まだ記事がありません。</p>'
+
+    index = f"""
+<header class="profile">
+  <span class="avatar big">{avatar}</span>
+  <h1>{e(name)}</h1>
+  <div class="bio">{bio}</div>
+  <p class="muted small">{len(articles)} 本の記事 · <a href="{REPO_URL}">GitHub</a></p>
+</header>
+<section class="cards">{cards}</section>
+<footer>最終更新 {now} JST</footer>
+"""
+    (OUT / "index.html").write_text(page(f"{name} の Terraform 練習記録", index), encoding="utf-8")
+    print(f"wrote {len(articles)} articles to {OUT}")
 
 
-TEMPLATE = """<!doctype html>
+PAGE = """<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Terraform Practice Portfolio</title>
-<style>
-:root {{
-  --bg: #f7f7f5; --surface: #fff; --text: #1d1d1f; --muted: #6b6b70; --line: #e3e3e0;
-  --accent: #5b3fd6; --pass: #1f8a4c; --fail: #b8640b; --todo: #8a8a8f;
-  --code-bg: #f2f1ee; --h0: #e8e8e4; --h1: #c5b9f5; --h2: #8f76ea; --h3: #5b3fd6;
-}}
-@media (prefers-color-scheme: dark) {{
-  :root {{
-    --bg: #141416; --surface: #1d1d20; --text: #ececee; --muted: #9c9ca3; --line: #2e2e33;
-    --accent: #a593ff; --pass: #4cc98a; --fail: #f0a04b; --todo: #8a8a8f;
-    --code-bg: #26262a; --h0: #26262a; --h1: #3d3470; --h2: #6450c4; --h3: #a593ff;
-  }}
-}}
-* {{ box-sizing: border-box; }}
-body {{ margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.7 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }}
-main {{ max-width: 960px; margin: 0 auto; padding: 48px 16px 64px; }}
-header h1 {{ font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }}
-header p {{ margin: 0; color: var(--muted); }}
-a {{ color: var(--accent); }}
-.stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 28px 0 8px; }}
-.stat {{ background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }}
-.stat b {{ display: block; font-size: 26px; font-variant-numeric: tabular-nums; }}
-.stat span {{ color: var(--muted); font-size: 13px; }}
-h2 {{ font-size: 18px; margin: 44px 0 14px; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }}
-.card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; min-width: 0; }}
-.row {{ display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }}
-.card h3 {{ font-size: 15px; margin: 0; }}
-.meta {{ margin: 4px 0 0; color: var(--muted); font-size: 13px; }}
-pre.desc {{ background: none; padding: 0; margin: 10px 0 0; color: var(--muted); white-space: pre-wrap; }}
-.badge {{ flex: none; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px;
-  border: 1px solid currentColor; }}
-.badge.pass {{ color: var(--pass); }} .badge.fail {{ color: var(--fail); }} .badge.todo {{ color: var(--todo); }}
-details {{ margin-top: 10px; }}
-summary {{ cursor: pointer; font-size: 13px; color: var(--accent); }}
-pre {{ background: var(--code-bg); border-radius: 8px; padding: 12px; overflow-x: auto;
-  font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 6px 0 0; }}
-.fname {{ font: 12px ui-monospace, monospace; color: var(--muted); margin-top: 10px; }}
-.heat {{ display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px);
-  grid-auto-columns: 12px; justify-content: start; gap: 3px;
-  overflow-x: auto; padding-bottom: 4px; }}
-.heat i {{ width: 12px; height: 12px; border-radius: 3px; background: var(--h0); }}
-.heat .l1 {{ background: var(--h1); }} .heat .l2 {{ background: var(--h2); }} .heat .l3 {{ background: var(--h3); }}
-.log-list {{ list-style: none; padding: 0; margin: 14px 0 0; }}
-.log-list li {{ display: flex; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }}
-.log-list time {{ flex: none; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }}
-.log-list a {{ color: var(--text); text-decoration: none; overflow-wrap: anywhere; }}
-.log-list a:hover {{ color: var(--accent); }}
-footer {{ margin-top: 48px; color: var(--muted); font-size: 13px; }}
-</style>
+<title>{title}</title>
+<link rel="stylesheet" href="{base}style.css">
 </head>
-<body>
-<main>
-<header>
-  <h1>Terraform Practice</h1>
-  <p>クラウドネットワークエンジニアを目指して、IaC（Terraform）を自宅環境で練習した記録。
-  コードを保存するたびに GitHub Actions が自動で採点し、このページを更新しています。</p>
-</header>
-
-<section class="stats">
-  <div class="stat"><b>{cleared} / {total}</b><span>演習クリア</span></div>
-  <div class="stat"><b>{n_commits}</b><span>コミット</span></div>
-  <div class="stat"><b>{n_days}</b><span>活動日数</span></div>
-</section>
-
-<h2>演習（白紙からコードを書き、自動採点）</h2>
-<div class="grid">{exercises}</div>
-
-<h2>構築プロジェクト</h2>
-<div class="grid">{projects}</div>
-
-<h2>活動</h2>
-<div class="card">
-  <div class="heat" aria-label="直近16週間のコミット数">{heat}</div>
-  <ul class="log-list">{commits}</ul>
-</div>
-
-<footer>最終更新 {now} · ソース <a href="{repo_url}">{repo}</a></footer>
-</main>
-</body>
+<body><main>{body}</main></body>
 </html>
+"""
+
+CSS = """
+:root {
+  --bg: #ffffff; --text: #08131a; --muted: #6b7680; --line: #e6e8ea;
+  --accent: #1a7f6e; --code-bg: #f5f6f7; --pass: #1a7f4b; --fail: #b25c00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181b; --text: #e8eaec; --muted: #98a2ab; --line: #2c3237;
+    --accent: #5cc8b4; --code-bg: #1f2428; --pass: #57c98c; --fail: #f0a04b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.9 "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; }
+main { max-width: 1000px; margin: 0 auto; padding: 32px 16px 64px; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+.avatar { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px;
+  border-radius: 50%; background: var(--accent); color: var(--bg); font-weight: 700; }
+.avatar.big { width: 72px; height: 72px; font-size: 30px; }
+.chip { flex: none; font-size: 12px; font-weight: 600; padding: 0 10px; border-radius: 999px;
+  border: 1px solid currentColor; line-height: 22px; white-space: nowrap; }
+.chip.pass { color: var(--pass); } .chip.fail { color: var(--fail); }
+
+/* 一覧 */
+.profile { text-align: center; padding: 24px 0 36px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+.profile h1 { font-size: 22px; margin: 12px 0 4px; }
+.bio { max-width: 560px; margin: 0 auto; color: var(--muted); font-size: 14px; }
+.bio p { margin: 4px 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 28px 24px; }
+.card { color: inherit; text-decoration: none; display: block; min-width: 0; }
+.card:hover h2 { color: var(--accent); }
+.card-body { padding-top: 12px; }
+.card h2 { font-size: 16px; line-height: 1.6; margin: 0 0 8px; }
+.card-meta { display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 13px; }
+
+/* アイキャッチ（記事ごとに色が変わる） */
+.thumb, .eyecatch { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
+  aspect-ratio: 1.91 / 1; border-radius: 10px; padding: 18px 20px; color: #fff; overflow: hidden;
+  background: linear-gradient(135deg, hsl(var(--h) 55% 38%), hsl(calc(var(--h) + 40) 60% 52%)); }
+.eye-kind { font-size: 12px; opacity: .85; letter-spacing: .04em; }
+.eye-title { font-weight: 700; font-size: 17px; line-height: 1.5; }
+.eyecatch .eye-title { font-size: clamp(20px, 4vw, 30px); }
+
+/* 記事 */
+nav.top { max-width: 680px; margin: 0 auto 20px; font-size: 14px; }
+nav.top a { color: var(--muted); text-decoration: none; }
+.post { max-width: 680px; margin: 0 auto; }
+.post h1 { font-size: clamp(24px, 4.5vw, 32px); line-height: 1.5; margin: 28px 0 16px; }
+.byline { display: flex; gap: 12px; align-items: center; font-size: 14px; line-height: 1.5;
+  padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.byline .chip { margin-left: auto; }
+.content h2 { font-size: 22px; margin: 48px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--text); }
+.content h3 { font-size: 18px; margin: 28px 0 8px; }
+.content table { border-collapse: collapse; width: 100%; font-size: 14px; display: block; overflow-x: auto; }
+.content th, .content td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+.content th { background: var(--code-bg); }
+.content code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+.content pre { background: var(--code-bg); border-radius: 8px; padding: 14px 16px; overflow-x: auto;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.content pre code { background: none; padding: 0; font-size: inherit; }
+.content pre.plain { background: none; padding: 0; white-space: pre-wrap; font-size: 14px; }
+.content details { margin: 12px 0; }
+.code { margin: 16px 0; }
+.code figcaption { font: 12px ui-monospace, monospace; color: var(--muted); }
+.code pre { margin: 4px 0 0; }
+.history { list-style: none; padding: 0; font-size: 14px; }
+.history li { display: flex; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.history time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.history a { color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.history a:hover { color: var(--accent); }
+
+footer { max-width: 680px; margin: 64px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
 """
 
 if __name__ == "__main__":
