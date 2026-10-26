@@ -1,0 +1,65 @@
+# Terraform CI: push / PR のたびにコードを自動チェックする。
+# AWS 認証情報は不要（plan / apply はしない）。
+#
+#   fmt      … 書式が揃っているか（terraform fmt -check）
+#   validate … 文法・型・参照が正しいか（terraform validate）
+#   tflint   … ベストプラクティス違反や AWS 固有の誤り
+name: Terraform CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive -diff
+
+  # .tf ファイルがあるディレクトリを自動で探して、以降のジョブを並列実行する。
+  # exercises/ に答えの .tf を追加すれば、それも自動でチェック対象になる。
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          dirs=$(find . -name '*.tf' -not -path '*/.terraform/*' -printf '%h\n' \
+            | sed 's|^\./||' | sort -u | jq -R . | jq -sc .)
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.discover.outputs.dirs) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+      - name: terraform validate
+        run: terraform validate -no-color
+
+      - name: tflint
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
