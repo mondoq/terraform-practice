@@ -1,0 +1,51 @@
+# Portfolio: main に push されるたびに演習を採点し、結果を GitHub Pages に公開する。
+#   1. scripts/grade.sh         … 演習を apply → check.sh で採点 → destroy（Docker はランナーに標準で入っている）
+#   2. scripts/build_portfolio.py … 採点結果・コード・コミット履歴から _site/index.html を生成
+#   3. GitHub Pages にデプロイ
+name: Portfolio
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 自動コミットで連続 push されたときは、古い実行を止めて最新だけ公開する
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 活動履歴のために全コミットを取得
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false # check.sh が terraform output -raw の値をそのまま使うため
+
+      - name: 演習を採点
+        run: scripts/grade.sh
+      - name: ページを生成
+        run: python3 scripts/build_portfolio.py
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

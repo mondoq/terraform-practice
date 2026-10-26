@@ -1,0 +1,10 @@
+{
+  // GitDoc: 保存すると数秒後に自動でコミット → push する
+  // （push されると GitHub Actions がポートフォリオを更新する）
+  "gitdoc.enabled": true,
+  "gitdoc.autoCommitDelay": 5000,
+  "gitdoc.autoPush": "onCommit",
+  "gitdoc.autoPull": "onPush",
+  "gitdoc.commitValidationLevel": "none",
+  "gitdoc.commitMessageFormat": "yyyy-MM-dd HH:mm"
+}

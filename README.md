@@ -1,5 +1,11 @@
 # Terraform 構築練習
 
+[![Terraform CI](https://github.com/mondoq/terraform-practice/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/mondoq/terraform-practice/actions/workflows/terraform-ci.yml)
+[![Portfolio](https://github.com/mondoq/terraform-practice/actions/workflows/portfolio.yml/badge.svg)](https://mondoq.github.io/terraform-practice/)
+
+📊 **ポートフォリオ（自動採点の結果）: https://mondoq.github.io/terraform-practice/**
+VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が演習を採点 → GitHub Pages を更新
+
 | # | ディレクトリ | 必要なもの | 料金 |
 |---|---|---|---|
 | 01 | `01-docker-basics/` | Docker のみ | 無料 |
