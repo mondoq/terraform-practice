@@ -19,8 +19,8 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
       - run: terraform fmt -check -recursive -diff
 
   # .tf ファイルがあるディレクトリを自動で探して、以降のジョブを並列実行する。
@@ -30,7 +30,7 @@ jobs:
     outputs:
       dirs: ${{ steps.find.outputs.dirs }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: find
         run: |
           dirs=$(find . -name '*.tf' -not -path '*/.terraform/*' -printf '%h\n' \
@@ -48,9 +48,9 @@ jobs:
       run:
         working-directory: ${{ matrix.dir }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+      - uses: terraform-linters/setup-tflint@v6
 
       - name: terraform init
         run: terraform init -backend=false -input=false
