@@ -1,5 +1,5 @@
 # Portfolio: main に push されるたびに、作ったものを記事にして GitHub Pages に公開する。
-#   1. scripts/build_portfolio.py … コード・NOTE.md・コミット履歴から記事ページを生成
+#   1. scripts/build_portfolio.py … コード・NOTE.md・コミット履歴・terraform graph から記事ページを生成
 #   2. GitHub Pages にデプロイ
 name: Portfolio
 
@@ -25,6 +25,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 活動履歴のために全コミットを取得
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false # terraform graph の出力をそのまま受け取るため
       - name: ページを生成
         run: |
           pip install markdown==3.10.3

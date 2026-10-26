@@ -7,7 +7,8 @@
 記事の材料:
   TASK.md   … 課題（「手順」の節は手元の作業メモなので除く）
   *.tf      … 書いたコード
-  NOTE.md   … 自分の一言（任意。空なら節ごと出さない）
+  NOTE.md   … 自分の一言（任意。空なら節ごと出さない）。```mermaid のコードブロックは図として表示
+  terraform graph … 依存関係図（terraform があれば init して実行。失敗したら節ごと出さない）
   git log   … 公開日・更新日・変更履歴
 プロフィールはリポジトリ直下の PROFILE.md（1行目の見出しが名前、残りが自己紹介）。
 """
@@ -68,9 +69,50 @@ def history(d):
     return f'<ul class="history">{"".join(items)}</ul>' if items else ""
 
 
+def mermaid_blocks(html_text):
+    """```mermaid のコードブロックを、mermaid.js が描画する <pre class="mermaid"> に変える"""
+    return re.sub(
+        r'<pre><code class="language-mermaid">(.*?)</code></pre>', r'<pre class="mermaid">\1</pre>', html_text, flags=re.S
+    )
+
+
 def note_html(d):
     text = re.sub(r"<!--.*?-->", "", read(d / "NOTE.md"), flags=re.S).strip()
-    return md(text, demote=1) if text else ""
+    return mermaid_blocks(md(text, demote=1)) if text else ""
+
+
+def graph_html(d):
+    """terraform graph（DOT 形式）を Mermaid のフローチャートに変換する"""
+    if not shutil.which("terraform"):
+        return ""
+    run = lambda *args: subprocess.run(["terraform", *args], cwd=d, capture_output=True, text=True)
+    if run("init", "-backend=false", "-input=false", "-no-color").returncode != 0:
+        return ""
+    dot = run("graph")
+    if dot.returncode != 0:
+        return ""
+    nodes = re.findall(r'^\s*"([^"]+)" \[label=', dot.stdout, flags=re.M)
+    edges = re.findall(r'^\s*"([^"]+)" -> "([^"]+)"', dot.stdout, flags=re.M)
+    if not nodes:
+        return ""
+
+    ids = {n: f"n{i}" for i, n in enumerate(nodes)}
+    lines = ["flowchart LR"]
+    for n in nodes:
+        *_, rtype, rname = n.split(".")
+        label = f'{rtype}<br/><small>{rname}</small>'
+        if n.startswith("data.") or ".data." in n:
+            lines.append(f'  {ids[n]}[/"{label}"/]:::data')  # data ソースは平行四辺形
+        else:
+            lines.append(f'  {ids[n]}["{label}"]')
+    # DOT は「使う側 -> 使われる側」。図は「先に必要なもの --> それを使うもの」の向きにする
+    lines += [f"  {ids[b]} --> {ids[a]}" for a, b in edges if a in ids and b in ids]
+    lines.append("  classDef data stroke-dasharray: 4 3")
+    return (
+        f'<pre class="mermaid">{e(chr(10).join(lines))}</pre>'
+        '<p class="caption">terraform graph から自動生成。矢印は「先に必要なもの → それを使うもの」。'
+        "平行四辺形は data ソース（既存のものを参照するだけで、作らない）。</p>"
+    )
 
 
 def task_html(d):
@@ -139,6 +181,7 @@ def exercise_articles():
             "body": "".join([
                 section("課題", task_html(d)),
                 section("作ったリソース", resources_html(d)),
+                section("依存関係図", graph_html(d)),
                 section("書いたコード", code_html(d)),
                 section("学んだこと", note_html(d)),
                 section("変更履歴", history(d)),
@@ -161,6 +204,7 @@ def project_articles():
             "body": "".join([
                 section("構成", f'<pre class="plain">{e(overview)}</pre>' if overview else ""),
                 section("作ったリソース", resources_html(d)),
+                section("依存関係図", graph_html(d)),
                 section("学んだこと", note_html(d)),
                 section("コード", code_html(d)),
                 section("変更履歴", history(d)),
@@ -187,7 +231,8 @@ def profile():
 
 def page(title, body, depth=0):
     base = "../" * depth
-    return PAGE.format(title=e(title), body=body, base=base)
+    scripts = MERMAID_SCRIPT if 'class="mermaid"' in body else ""
+    return PAGE.format(title=e(title), body=body, base=base, scripts=scripts)
 
 
 def main():
@@ -259,8 +304,16 @@ PAGE = """<!doctype html>
 <title>{title}</title>
 <link rel="stylesheet" href="{base}style.css">
 </head>
-<body><main>{body}</main></body>
+<body><main>{body}</main>{scripts}</body>
 </html>
+"""
+
+MERMAID_SCRIPT = """
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "strict" });
+</script>
 """
 
 CSS = """
@@ -319,6 +372,7 @@ nav.top a { color: var(--muted); text-decoration: none; }
 .byline .chip { margin-left: auto; }
 .content h2 { font-size: 22px; margin: 48px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--text); }
 .content h3 { font-size: 18px; margin: 28px 0 8px; }
+.content h4 { font-size: 16px; margin: 24px 0 6px; }
 .content table { border-collapse: collapse; width: 100%; font-size: 14px; display: block; overflow-x: auto; }
 .content th, .content td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .content th { background: var(--code-bg); }
@@ -334,6 +388,8 @@ nav.top a { color: var(--muted); text-decoration: none; }
 .resources { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .resources li { border: 1px solid var(--line); border-radius: 8px; padding: 2px 10px; font-size: 14px; }
 .resources code { background: none; padding: 0; }
+.content pre.mermaid { background: none; padding: 8px 0; text-align: center; font: inherit; overflow-x: auto; }
+.caption { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .history { list-style: none; padding: 0; font-size: 14px; }
 .history li { display: flex; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .history time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }

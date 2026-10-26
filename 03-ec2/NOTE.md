@@ -8,3 +8,18 @@
 - 次に試したいこと
 -->
 EC2を一つ建てた。
+
+### 構成図
+
+```mermaid
+flowchart LR
+  AMI[/"AMI<br/>Amazon Linux 2023"/]
+  subgraph AWS["東京リージョン"]
+    subgraph VPC["デフォルト VPC"]
+      subgraph SUB["デフォルトサブネット"]
+        EC2["EC2<br/>t3.micro"]
+      end
+    end
+  end
+  AMI -. 起動イメージ .-> EC2
+```
