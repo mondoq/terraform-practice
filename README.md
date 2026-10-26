@@ -3,10 +3,10 @@
 [![Terraform CI](https://github.com/mondoq/terraform-practice/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/mondoq/terraform-practice/actions/workflows/terraform-ci.yml)
 [![Portfolio](https://github.com/mondoq/terraform-practice/actions/workflows/portfolio.yml/badge.svg)](https://mondoq.github.io/terraform-practice/)
 
-📊 **ポートフォリオ（自動採点の結果）: https://mondoq.github.io/terraform-practice/**
-VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が演習を採点 → GitHub Pages に記事として公開
+📝 **ポートフォリオ: https://mondoq.github.io/terraform-practice/**
+VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が記事を生成 → GitHub Pages に公開
 
-- 演習は、`.tf` を書き始めると記事になる（課題・コード・採点結果・変更履歴は自動）
+- `NN-名前/` と、`.tf` を書き始めた演習が記事になる（構成・作ったリソース・コード・変更履歴は自動）
 - 各フォルダの `NOTE.md` に書いた内容は、記事の「学んだこと」に載る
 - プロフィールは `PROFILE.md`
 

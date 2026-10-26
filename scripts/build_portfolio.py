@@ -8,7 +8,6 @@
   TASK.md   … 課題（「手順」の節は手元の作業メモなので除く）
   *.tf      … 書いたコード
   NOTE.md   … 自分の一言（任意。空なら節ごと出さない）
-  build/results/ … scripts/grade.sh の採点結果
   git log   … 公開日・更新日・変更履歴
 プロフィールはリポジトリ直下の PROFILE.md（1行目の見出しが名前、残りが自己紹介）。
 """
@@ -24,7 +23,6 @@ import zlib
 import markdown
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-RESULTS = ROOT / "build" / "results"
 OUT = ROOT / "_site"
 REPO = os.environ.get("GITHUB_REPOSITORY", "mondoq/terraform-practice")
 REPO_URL = f"https://github.com/{REPO}"
@@ -90,6 +88,28 @@ def code_html(d):
     )
 
 
+PROVIDER_LABEL = {"aws": "AWS", "docker": "Docker", "google": "Google Cloud", "azurerm": "Azure"}
+
+
+def providers(d):
+    names = []
+    for tf in sorted(d.glob("*.tf")):
+        for name in re.findall(r'source\s*=\s*"[^"/]+/([^"]+)"', read(tf)):
+            label = PROVIDER_LABEL.get(name, name)
+            if label not in names:
+                names.append(label)
+    return " / ".join(names) or "Terraform"
+
+
+def resources_html(d):
+    """コード中の resource ブロックを「何を作ったか」の一覧にする"""
+    items = []
+    for tf in sorted(d.glob("*.tf")):
+        for rtype, rname in re.findall(r'^resource\s+"([^"]+)"\s+"([^"]+)"', read(tf), flags=re.M):
+            items.append(f"<li><code>{e(rtype)}</code> <span class=\"muted\">{e(rname)}</span></li>")
+    return f'<ul class="resources">{"".join(items)}</ul>' if items else ""
+
+
 def leading_comment(tf):
     lines = []
     for line in read(tf).splitlines():
@@ -105,27 +125,22 @@ def section(title, body):
 
 def exercise_articles():
     for d in sorted(p for p in (ROOT / "exercises").glob("ex*") if p.is_dir()):
-        status = read(RESULTS / f"{d.name}.status").strip()
-        if status not in ("pass", "fail"):
-            continue  # 未着手は記事にしない
-        log = read(RESULTS / f"{d.name}.log")
-        m = re.search(r"結果: (\d+) 合格 / (\d+) 不合格", log)
-        score = f" {m[1]}/{int(m[1]) + int(m[2])}" if m else ""
+        if not any(d.glob("*.tf")):
+            continue  # まだコードを書いていない演習は記事にしない
         title = read(d / "TASK.md").splitlines()[0].lstrip("# ") if (d / "TASK.md").exists() else d.name
         published, updated = dir_dates(d)
         yield {
             "slug": d.name,
             "kind": "演習",
             "title": title,
-            "chip": ("クリア" if status == "pass" else "挑戦中") + score,
-            "chip_cls": status,
+            "chip": providers(d),
             "published": published,
             "updated": updated,
             "body": "".join([
                 section("課題", task_html(d)),
+                section("作ったリソース", resources_html(d)),
                 section("書いたコード", code_html(d)),
                 section("学んだこと", note_html(d)),
-                section("自動採点の結果", f'<pre class="log">{e(log)}</pre>'),
                 section("変更履歴", history(d)),
             ]),
         }
@@ -133,7 +148,6 @@ def exercise_articles():
 
 def project_articles():
     for d in sorted(p for p in ROOT.glob("[0-9][0-9]-*") if p.is_dir()):
-        status = read(RESULTS / f"{d.name}.status").strip()
         desc = leading_comment(d / "main.tf")
         overview = "\n".join(desc[1:]).strip("\n")
         published, updated = dir_dates(d)
@@ -141,12 +155,12 @@ def project_articles():
             "slug": d.name,
             "kind": "構築",
             "title": re.sub(r"^演習\d+:\s*", "", desc[0]) if desc else d.name,
-            "chip": "validate OK" if status == "pass" else "validate NG",
-            "chip_cls": "pass" if status == "pass" else "fail",
+            "chip": providers(d),
             "published": published,
             "updated": updated,
             "body": "".join([
                 section("構成", f'<pre class="plain">{e(overview)}</pre>' if overview else ""),
+                section("作ったリソース", resources_html(d)),
                 section("学んだこと", note_html(d)),
                 section("コード", code_html(d)),
                 section("変更履歴", history(d)),
@@ -203,11 +217,11 @@ def main():
   <div class="byline">
     <span class="avatar">{avatar}</span>
     <div><b>{e(name)}</b><br><span class="muted">{jp_date(a["published"])}{updated}</span></div>
-    <span class="chip {a["chip_cls"]}">{e(a["chip"])}</span>
+    <span class="chip">{e(a["chip"])}</span>
   </div>
   <div class="content">{a["body"]}</div>
 </article>
-<footer>このページは push のたびに GitHub Actions が自動採点・生成しています（{now} JST）· <a href="{REPO_URL}">ソース</a></footer>
+<footer>このページは push のたびに GitHub Actions が自動生成しています（{now} JST）· <a href="{REPO_URL}">ソース</a></footer>
 """
         (OUT / "posts" / f"{a['slug']}.html").write_text(page(a["title"], body, depth=1), encoding="utf-8")
 
@@ -217,7 +231,7 @@ def main():
   <div class="card-body">
     <h2>{e(a["title"])}</h2>
     <div class="card-meta"><span class="muted">{jp_date(a["updated"] or a["published"])}</span>
-    <span class="chip {a["chip_cls"]}">{e(a["chip"])}</span></div>
+    <span class="chip">{e(a["chip"])}</span></div>
   </div>
 </a>"""
         for a in articles
@@ -252,12 +266,12 @@ PAGE = """<!doctype html>
 CSS = """
 :root {
   --bg: #ffffff; --text: #08131a; --muted: #6b7680; --line: #e6e8ea;
-  --accent: #1a7f6e; --code-bg: #f5f6f7; --pass: #1a7f4b; --fail: #b25c00;
+  --accent: #1a7f6e; --code-bg: #f5f6f7;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15181b; --text: #e8eaec; --muted: #98a2ab; --line: #2c3237;
-    --accent: #5cc8b4; --code-bg: #1f2428; --pass: #57c98c; --fail: #f0a04b;
+    --accent: #5cc8b4; --code-bg: #1f2428;
   }
 }
 * { box-sizing: border-box; }
@@ -273,7 +287,7 @@ a { color: var(--accent); }
 .avatar.big { width: 72px; height: 72px; font-size: 30px; }
 .chip { flex: none; font-size: 12px; font-weight: 600; padding: 0 10px; border-radius: 999px;
   border: 1px solid currentColor; line-height: 22px; white-space: nowrap; }
-.chip.pass { color: var(--pass); } .chip.fail { color: var(--fail); }
+.chip { color: var(--accent); }
 
 /* 一覧 */
 .profile { text-align: center; padding: 24px 0 36px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
@@ -317,6 +331,9 @@ nav.top a { color: var(--muted); text-decoration: none; }
 .code { margin: 16px 0; }
 .code figcaption { font: 12px ui-monospace, monospace; color: var(--muted); }
 .code pre { margin: 4px 0 0; }
+.resources { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.resources li { border: 1px solid var(--line); border-radius: 8px; padding: 2px 10px; font-size: 14px; }
+.resources code { background: none; padding: 0; }
 .history { list-style: none; padding: 0; font-size: 14px; }
 .history li { display: flex; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .history time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
