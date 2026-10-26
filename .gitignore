@@ -1,6 +1,30 @@
+# Terraform（state には作ったリソースの詳細や秘密値が平文で入る）
 .terraform/
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# 認証情報・鍵（公開リポジトリに自動 push されるので念のため）
+.env
+.env.*
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+.aws/
+credentials
+
+# ポートフォリオのビルド結果
 build/
 _site/
