@@ -1,0 +1,12 @@
+# systemd のユーザーサービス定義。登録方法は README を参照
+[Unit]
+Description=terraform-practice: 変更を自動でコミット・push する
+After=network-online.target
+
+[Service]
+ExecStart=%h/terraform-practice/scripts/autosync.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

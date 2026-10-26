@@ -4,7 +4,16 @@
 [![Portfolio](https://github.com/mondoq/terraform-practice/actions/workflows/portfolio.yml/badge.svg)](https://mondoq.github.io/terraform-practice/)
 
 📝 **ポートフォリオ: https://mondoq.github.io/terraform-practice/**
-VS Code で保存 → GitDoc が自動コミット・push → GitHub Actions が記事を生成 → GitHub Pages に公開
+保存 → `scripts/autosync.sh` が自動コミット・push → GitHub Actions が記事を生成 → GitHub Pages に公開
+
+自動コミットの登録（最初に1回だけ）:
+```bash
+mkdir -p ~/.config/systemd/user
+ln -sf ~/terraform-practice/scripts/autosync.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now autosync
+```
+`systemctl --user status autosync`（状態）/ `journalctl --user -u autosync -f`（ログ）/ `systemctl --user stop autosync`（一時停止）
 
 - `NN-名前/` と、`.tf` を書き始めた演習が記事になる（構成・作ったリソース・コード・変更履歴は自動）
 - 各フォルダの `NOTE.md` に書いた内容は、記事の「学んだこと」に載る

@@ -1,10 +1,5 @@
 {
-  // GitDoc: 保存すると数秒後に自動でコミット → push する
-  // （push されると GitHub Actions がポートフォリオを更新する）
-  "gitdoc.enabled": true,
-  "gitdoc.autoCommitDelay": 5000,
-  "gitdoc.autoPush": "onCommit",
-  "gitdoc.autoPull": "onPush",
-  "gitdoc.commitValidationLevel": "none",
-  "gitdoc.commitMessageFormat": "yyyy-MM-dd HH:mm"
+  // 自動コミット・push は scripts/autosync.sh（systemd のユーザーサービス）が行うので、
+  // GitDoc は使わない（両方動くと二重にコミットされる）
+  "gitdoc.enabled": false
 }
