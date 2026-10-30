@@ -15,9 +15,17 @@ terraform {
       version = "~> 6.0"
     }
   }
+}　
+説明:terraformをハッシュコープからプラグインを行う
+ 　　ハッシュコープのawsのversion範囲6.0のプラグイン　　を行う。
+
+ provider "aws" {
+  region = "ap-northeast-1"
 }
+説明:
 　
 AMIの設定:
+　
 　
 
 ### 構成図
