@@ -28,3 +28,6 @@ credentials
 # ポートフォリオのビルド結果
 build/
 _site/
+
+linux_amd64/
+terraform-provider-*
