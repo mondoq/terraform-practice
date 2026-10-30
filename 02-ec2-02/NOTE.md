@@ -7,7 +7,18 @@
 - 詰まったところと、どう解決したか
 - 次に試したいこと
 -->
-EC2の構築
+terraform {
+  required_version = ">=1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+　
+AMIの設定:
+　
 
 ### 構成図
 
