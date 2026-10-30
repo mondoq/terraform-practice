@@ -44,6 +44,30 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # Secrets 未登録のうちはメール送信を飛ばす（if では secrets を直接参照できないため env 経由）
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+      # 公開できたら Gmail に通知する（失敗時の通知は GitHub 標準のメールに任せる）
+      - name: 公開完了を Gmail で通知
+        if: env.GMAIL_USER != ''
+        uses: dawidd6/action-send-mail@v23
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USER }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }} # Google のアプリパスワード（通常のパスワードではない）
+          from: Portfolio <${{ secrets.GMAIL_USER }}>
+          to: ${{ secrets.GMAIL_USER }}
+          subject: "ポートフォリオ公開: ${{ github.event.head_commit.message || 'manual run' }}"
+          body: |
+            ポートフォリオを公開しました。
+
+            ページ: ${{ steps.deployment.outputs.page_url }}
+            コミット: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+            実行ログ: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
